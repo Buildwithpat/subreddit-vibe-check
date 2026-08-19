@@ -1,69 +1,242 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import React, { useState } from "react";
+import { useSubredditVibe } from "@/hooks";
+import { Navbar, Footer } from "@/components/layout";
+import { SearchBar, EmptyState, KpiCards, InsightsSection, DashboardSkeleton } from "@/components/dashboard";
+import { SentimentCharts } from "@/components/charts";
+import type { VibeErrorCode } from "@/hooks/use-subreddit-vibe";
+
+const WRAP: React.CSSProperties = {
+  maxWidth: "1280px",
+  width: "100%",
+  margin: "0 auto",
+  paddingLeft: "clamp(16px,3vw,40px)",
+  paddingRight: "clamp(16px,3vw,40px)",
+};
+
+/* ─── Error banner ───────────────────────────────────────────────────────── */
+function ErrorBanner({
+  error,
+  errorCode,
+  subreddit,
+  onRetry,
+}: {
+  error: string;
+  errorCode: VibeErrorCode | null;
+  subreddit: string;
+  onRetry: () => void;
+}) {
+  const isNotFound = errorCode === "SUBREDDIT_NOT_FOUND";
+  const isPrivate  = errorCode === "SUBREDDIT_PRIVATE" || errorCode === "SUBREDDIT_BANNED";
+  const isRateLimit = errorCode === "RATE_LIMITED";
+  const isTimeout  = errorCode === "TIMEOUT" || errorCode === "NETWORK_ERROR";
+
+  const icon = isNotFound ? "🔍"
+    : isPrivate  ? "🔒"
+    : isRateLimit ? "⏱"
+    : isTimeout  ? "📡"
+    : "⚠️";
+
+  const title = isNotFound ? `r/${subreddit} not found`
+    : isPrivate  ? `r/${subreddit} is private`
+    : isRateLimit ? "Rate limited by Reddit"
+    : isTimeout  ? "Connection issue"
+    : "Analysis failed";
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div
+      role="alert"
+      aria-live="assertive"
+      style={{
+        display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+        gap: "12px", marginBottom: "14px", padding: "14px 18px",
+        background: "var(--surface)",
+        border: "1px solid var(--negative)",
+        borderRadius: "8px",
+      }}
+    >
+      <div style={{ display: "flex", gap: "12px", alignItems: "flex-start" }}>
+        <span style={{ fontSize: "18px", lineHeight: 1, marginTop: "1px", flexShrink: 0 }} aria-hidden="true">
+          {icon}
+        </span>
+        <div>
+          <p style={{ fontSize: "14px", fontWeight: 600, color: "var(--tx-1)", marginBottom: "3px" }}>
+            {title}
           </p>
+          <p style={{ fontSize: "13px", color: "var(--tx-2)", lineHeight: "1.5" }}>
+            {error}
+          </p>
+          {isNotFound && (
+            <p style={{ fontSize: "12px", color: "var(--tx-3)", marginTop: "4px" }}>
+              Make sure you typed the subreddit name correctly. Subreddit names are case-insensitive.
+            </p>
+          )}
+          {isRateLimit && (
+            <p style={{ fontSize: "12px", color: "var(--tx-3)", marginTop: "4px" }}>
+              Reddit enforces rate limits on public API access. Wait 30–60 seconds before retrying.
+            </p>
+          )}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
+      </div>
+      {!isPrivate && !isNotFound && (
+        <button
+          onClick={onRetry}
+          className="btn-ghost-danger"
+          aria-label="Retry analysis"
+          style={{ flexShrink: 0, marginTop: "2px" }}
+        >
+          Retry
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ─── Results header ─────────────────────────────────────────────────────── */
+function ResultsHeader({
+  subreddit,
+  overallVibe,
+  totalPosts,
+}: {
+  subreddit: string;
+  overallVibe: "Positive" | "Neutral" | "Negative";
+  totalPosts: number;
+}) {
+  const vibeColor =
+    overallVibe === "Positive" ? "var(--positive)" :
+    overallVibe === "Negative" ? "var(--negative)" : "var(--neutral)";
+  
+  return (
+    <div
+      className="card-enter"
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        paddingBottom: "14px",
+        borderBottom: "1px solid var(--border-g)",
+        marginBottom: "20px",
+        "--stagger": "0ms",
+      } as React.CSSProperties}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+        <h1 style={{ fontSize: "20px", fontWeight: 700, letterSpacing: "-0.01em", color: "var(--tx-1)", margin: 0 }}>
+          r/{subreddit}
+        </h1>
+        <span
+          aria-label={`Overall vibe: ${overallVibe}`}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: "6px",
+            fontSize: "12px", fontWeight: 600,
+            color: vibeColor, background: "var(--surface)", border: `1px solid var(--border-g)`,
+            padding: "4px 10px", borderRadius: "16px",
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              width: "6px", height: "6px", borderRadius: "50%", flexShrink: 0,
+              background: vibeColor,
+            }}
+          />
+          {overallVibe}
+        </span>
+      </div>
+      <span style={{ fontSize: "13px", color: "var(--tx-3)", whiteSpace: "nowrap", fontWeight: 500 }}>
+        {totalPosts} posts · Top hot feed
+      </span>
+    </div>
+  );
+}
+
+/* ─── Page ───────────────────────────────────────────────────────────────── */
+export default function Home() {
+  const {
+    subredditInput, setSubredditInput,
+    isLoading, error, errorCode, analytics, currentSubreddit, analyzeSubreddit,
+  } = useSubredditVibe("");
+
+  const [hasInitiated, setHasInitiated] = useState(false);
+
+  const handleSearch = async () => { setHasInitiated(true); await analyzeSubreddit(); };
+  const handleSelect = async (sub: string) => {
+    setSubredditInput(sub);
+    setHasInitiated(true);
+    await analyzeSubreddit(sub);
+  };
+
+  const showEmpty   = !isLoading && !analytics && !error && !hasInitiated;
+  const showResults = !isLoading && !!analytics && !!currentSubreddit;
+
+  return (
+    <div style={{ position: "relative", minHeight: "100dvh", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
+      <Navbar />
+
+      {/* Search strip */}
+      <div
+        role="search"
+        aria-label="Subreddit search"
+        style={{
+          borderBottom: "1px solid var(--border-g)",
+          background: "var(--bg)",
+          padding: "20px 0",
+        }}
+      >
+        <div style={WRAP}>
+          {!hasInitiated && (
+            <p style={{ fontSize: "14px", fontWeight: 500, color: "var(--tx-1)", marginBottom: "12px" }}>
+              Community Sentiment Intelligence
+            </p>
+          )}
+          <SearchBar
+            value={subredditInput}
+            onChange={setSubredditInput}
+            onSubmit={handleSearch}
+            onSelectSuggestion={handleSelect}
+            isLoading={isLoading}
+            currentSubreddit={currentSubreddit}
+          />
+        </div>
+      </div>
+
+      {/* Main content */}
+      <main id="main-content" style={{ flex: 1, background: "var(--surface)" }} aria-label="Analysis results">
+        <div style={{ ...WRAP, paddingTop: "24px", paddingBottom: "48px" }}>
+
+          <div aria-live="polite" aria-atomic="true" className="sr-only" style={{ position: "absolute", width: "1px", height: "1px", overflow: "hidden", clip: "rect(0,0,0,0)", whiteSpace: "nowrap" }}>
+            {isLoading && `Analyzing r/${subredditInput}…`}
+            {showResults && `Analysis complete for r/${currentSubreddit}. Overall vibe: ${analytics?.overallVibe}.`}
+          </div>
+
+          {error && !isLoading && (
+            <ErrorBanner
+              error={error}
+              errorCode={errorCode}
+              subreddit={subredditInput}
+              onRetry={handleSearch}
             />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+          )}
+
+          {isLoading && <DashboardSkeleton />}
+
+          {showResults && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+              <ResultsHeader
+                subreddit={currentSubreddit!}
+                overallVibe={analytics!.overallVibe}
+                totalPosts={analytics!.totalPosts}
+              />
+              <KpiCards    analytics={analytics!} subreddit={currentSubreddit!} />
+              <SentimentCharts analytics={analytics!} subreddit={currentSubreddit!} />
+              <InsightsSection analytics={analytics!} subreddit={currentSubreddit!} />
+            </div>
+          )}
+
+          {showEmpty && <EmptyState onSelectSubreddit={handleSelect} isLoading={isLoading} hasInitiated={hasInitiated} />}
+
         </div>
       </main>
+
+      <Footer />
     </div>
   );
 }
